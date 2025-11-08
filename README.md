@@ -5,8 +5,8 @@ This repository implements a Cursor-style tri-plane composed of an FP8 MoE train
 ## Architecture Overview
 
 - **Environment Fleet**: `envd/server.py` provides the gRPC tool surface (read/edit/search/lint/exec) and optional semantic search backed by Qdrant; Firecracker launch scripts in `scripts/firecracker/` create snapshot-based microVMs.
-- **Inference**: `inference/serve.py` bootstraps Ray actors (controller, samplers, env clients) to execute parallel tool plans with straggler mitigation and speculative rollouts.
-- **Trainer**: `trainer/` contains a PPO loop over a lightweight MoE transformer policy, reward shaping utilities, and data helpers suitable for integration with DeepSpeed/Megatron FP8 stacks.
+- **Inference**: `inference/serve.py` bootstraps Ray actors (controller, samplers, env clients) to execute parallel tool plans with straggler mitigation and speculative rollouts, with pluggable samplers (stub or OpenAI-compatible vLLM backend) and rollout persistence (JSONL/S3/ClickHouse).
+- **Trainer**: `trainer/` contains a PPO loop over a lightweight MoE transformer policy plus a DeepSpeed/TransformerEngine FP8 training stack for large-scale runs.
 
 ## Getting Started
 
@@ -31,6 +31,22 @@ This repository implements a Cursor-style tri-plane composed of an FP8 MoE train
    ```bash
    ./experiments/run_training.sh
    ```
+6. **DeepSpeed MoE trainer** (requires NVIDIA + TransformerEngine/DeepSpeed):
+   ```bash
+   deepspeed --num_gpus=8 trainer/train_deepspeed.py --rollouts /data/rollouts.jsonl
+   ```
+
+## Testing & Continuous Integration
+
+1. Install lightweight test dependencies:
+   ```bash
+   pip install -r requirements-test.txt
+   ```
+2. Run the pytest suite:
+   ```bash
+   pytest
+   ```
+3. GitHub Actions workflow: `.github/workflows/ci.yml` executes the same test suite on pushes and pull requests.
 
 ## Firecracker Workflow
 
@@ -56,5 +72,5 @@ This repository implements a Cursor-style tri-plane composed of an FP8 MoE train
 ## Roadmap
 
 - Integrate semantic code search using a production-grade embedding model.
-- Replace the stub model sampler with a vLLM or serve-hosted policy endpoint.
-- Wire reward streaming to an external registry (e.g., ClickHouse + S3 checkpoint sync).
+- Replace the stub sampler with a production vLLM deployment and wire in live checkpoints.
+- Wire reward streaming to an external registry (e.g., ClickHouse + S3 checkpoint sync) for online PPO.

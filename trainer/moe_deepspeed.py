@@ -1,12 +1,27 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 from typing import Dict, Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from deepspeed.moe.layer import MoE
-from transformer_engine.pytorch import fp8_autocast
+
+try:
+    from deepspeed.moe.layer import MoE
+
+    HAS_DEEPSPEED = True
+except ImportError:  # pragma: no cover - optional dependency
+    MoE = None  # type: ignore[assignment]
+    HAS_DEEPSPEED = False
+
+try:
+    from transformer_engine.pytorch import fp8_autocast as _fp8_autocast
+
+    HAS_TRANSFORMER_ENGINE = True
+except ImportError:  # pragma: no cover - optional dependency
+    _fp8_autocast = None
+    HAS_TRANSFORMER_ENGINE = False
 
 from .config import DeepSpeedMoEConfig
 
@@ -21,7 +36,15 @@ class ExpertMLP(nn.Module):
         return self.fc2(F.gelu(self.fc1(x)))
 
 
+def _fp8_context(enabled: bool):
+    if enabled and HAS_TRANSFORMER_ENGINE and _fp8_autocast is not None:
+        return _fp8_autocast(enabled=enabled)
+    return nullcontext()
+
+
 def build_moe(hidden_size: int, ffn_hidden: int, num_experts: int, capacity_factor: float) -> MoE:
+    if not HAS_DEEPSPEED:
+        raise RuntimeError("DeepSpeed MoE is not available; install deepspeed to enable this module")
     return MoE(
         hidden_size=hidden_size,
         expert=ExpertMLP,
@@ -46,7 +69,7 @@ class TransformerMoELayer(nn.Module):
         self.fp8 = cfg.fp8
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        with fp8_autocast(enabled=self.fp8):
+        with _fp8_context(self.fp8):
             attn_out, _ = self.attn(x, x, x, need_weights=False)
             x = self.ln1(x + self.dropout(attn_out))
             bsz, seqlen, hidden = x.shape
@@ -110,4 +133,4 @@ def build_engine_config(cfg: DeepSpeedMoEConfig, optimizer: Dict[str, float]) ->
     return base
 
 
-__all__ = ["DeepSpeedMoETransformer", "PPOPolicyValue", "build_engine_config"]
+__all__ = ["DeepSpeedMoETransformer", "PPOPolicyValue", "build_engine_config", "HAS_DEEPSPEED"]
