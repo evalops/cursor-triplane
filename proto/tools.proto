@@ -1,0 +1,56 @@
+syntax = "proto3";
+package tools;
+
+service Tools {
+  rpc ReadFile(ReadFileReq) returns (ReadFileResp);
+  rpc EditFile(EditFileReq) returns (EditFileResp);
+  rpc SearchCode(SearchReq) returns (SearchResp);
+  rpc RunLint(Empty) returns (LintResp);
+  rpc Exec(ExecReq) returns (ExecResp);
+}
+
+message ReadFileReq { string path = 1; }
+message ReadFileResp { string content = 1; }
+
+message EditFileReq {
+  string path = 1;
+  string patch_unified = 2;
+  bool dry_run = 3;
+}
+
+message EditFileResp {
+  bool applied = 1;
+  string diff = 2;
+  string stderr = 3;
+}
+
+message SearchReq {
+  string query = 1;
+  int32 k = 2;
+  bool semantic = 3;
+}
+
+message SearchResp {
+  repeated string paths = 1;
+  repeated float scores = 2;
+}
+
+message ExecReq {
+  string cmd = 1;
+  int32 timeout_s = 2;
+  bool capture_output = 3;
+}
+
+message ExecResp {
+  int32 code = 1;
+  string stdout = 2;
+  string stderr = 3;
+  double duration_s = 4;
+}
+
+message Empty {}
+
+message LintResp {
+  string sarif_json = 1;
+  string stderr = 2;
+}
