@@ -23,4 +23,44 @@ class TrainConfig:
     total_steps: int = 1000
 
 
-__all__ = ["TrainConfig"]
+@dataclass(slots=True)
+class DeepSpeedMoEConfig:
+    hidden_size: int = 1024
+    num_attention_heads: int = 16
+    num_layers: int = 16
+    num_experts: int = 8
+    expert_capacity: float = 1.25
+    sequence_length: int = 1024
+    vocab_size: int = 8192
+    tensor_parallel: int = 1
+    pipeline_parallel: int = 1
+    micro_batch_size: int = 4
+    global_batch_size: int = 32
+    dropout: float = 0.1
+    fp8: bool = True
+    dtype: str = "bf16"
+
+    def to_deepspeed_dict(self) -> dict:
+        return {
+            "train_batch_size": self.global_batch_size,
+            "train_micro_batch_size_per_gpu": self.micro_batch_size,
+            "steps_per_print": 10,
+            "bf16": {"enabled": self.dtype == "bf16"},
+            "fp16": {"enabled": self.dtype == "fp16"},
+            "zero_optimization": {"stage": 1},
+            "wall_clock_breakdown": False,
+            "tensor_parallel": {
+                "enabled": self.tensor_parallel > 1,
+                "tp_size": self.tensor_parallel,
+            },
+            "moe": {
+                "enabled": True,
+                "expert_parallelism": self.num_experts,
+                "moe_tp_size": self.tensor_parallel,
+                "moe_experts": self.num_experts,
+                "capacity_factor": self.expert_capacity,
+            },
+        }
+
+
+__all__ = ["TrainConfig", "DeepSpeedMoEConfig"]

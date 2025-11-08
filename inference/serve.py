@@ -4,14 +4,17 @@ import asyncio
 import json
 import random
 import time
-from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional
+from dataclasses import asdict, dataclass
+from typing import Any, Dict, Iterable, List
 
 import ray
 import grpc
 from google.protobuf.json_format import MessageToDict
 
 from envd.generated import tools_pb2, tools_pb2_grpc
+from .config import SamplerConfig, StorageConfig
+from .model import create_sampler, ensure_json_plan
+from .storage import create_storage
 
 
 @dataclass(slots=True)
@@ -71,20 +74,14 @@ class EnvClient:
 
 @ray.remote(num_cpus=0.1)
 class ModelSampler:
-    def __init__(self, *, endpoint: Optional[str] = None):
-        self._endpoint = endpoint
+    def __init__(self, cfg_dict: Dict[str, Any]):
+        self._cfg = SamplerConfig(**cfg_dict)
+        self._backend = create_sampler(self._cfg)
 
     async def sample(self, prompt: str) -> str:
-        del prompt
-        plan = {
-            "parallel": [
-                {"tool": "SearchCode", "args": {"query": "README", "k": 5}},
-            ],
-            "then": [
-                {"tool": "RunLint", "args": {}},
-            ],
-        }
-        return json.dumps(plan)
+        plan = await self._backend.sample(prompt)
+        normalized = await ensure_json_plan(plan)
+        return normalized
 
 
 @ray.remote(num_cpus=0.2)
@@ -105,6 +102,8 @@ class Sampler:
         started = time.perf_counter()
         plan_json = await self._model.sample.remote(prompt)
         plan = json.loads(plan_json)
+        if not isinstance(plan, dict):
+            plan = {}
         trajectory: List[Dict[str, Any]] = []
 
         for step_name in ("parallel", "then"):
@@ -134,15 +133,19 @@ class Sampler:
 
 @ray.remote(num_cpus=0.05)
 class Controller:
-    def __init__(self, sampler_refs: Iterable[ray.actor.ActorHandle]):
+    def __init__(self, sampler_refs: Iterable[ray.actor.ActorHandle], storage_cfg: Dict[str, Any]):
         self._samplers = list(sampler_refs)
+        self._storage = create_storage(StorageConfig(**storage_cfg))
 
     async def batch_rollouts(self, prompts: List[str], *, replicas: int = 3, timeout_s: float = 60.0) -> List[Dict[str, Any]]:
         object_refs: List[ray.ObjectRef] = []
+        prompt_map: Dict[ray.ObjectRef, str] = {}
         for prompt in prompts:
             for _ in range(replicas):
                 sampler = random.choice(self._samplers)
-                object_refs.append(sampler.rollout.remote(prompt))
+                ref = sampler.rollout.remote(prompt)
+                object_refs.append(ref)
+                prompt_map[ref] = prompt
 
         deadline = time.perf_counter() + timeout_s
         results: List[Dict[str, Any]] = []
@@ -150,15 +153,22 @@ class Controller:
 
         while pending and time.perf_counter() < deadline:
             wait_timeout = max(0.0, deadline - time.perf_counter())
-            ready, pending = ray.wait(pending, timeout=wait_timeout, num_returns=len(pending))
+            ready, pending = ray.wait(pending, timeout=wait_timeout, num_returns=1)
             for ref in ready:
+                prompt = prompt_map.get(ref, "")
                 try:
-                    results.append(await ref)
+                    result = await ref
                 except Exception as exc:  # noqa: BLE001
-                    results.append({"error": str(exc)})
+                    result = {"error": str(exc)}
+                record = {"prompt": prompt, "result": result, "timestamp_s": time.time()}
+                results.append(record)
+                prompt_map.pop(ref, None)
 
         for ref in pending:
             ray.cancel(ref, force=True)
+
+        if results:
+            await self._storage.write(results)
         return results
 
 
@@ -166,9 +176,11 @@ def bootstrap_ray(env_hosts: List[str], *, num_samplers: int = 2):
     if not ray.is_initialized():
         ray.init(ignore_reinit_error=True)
 
-    model = ModelSampler.remote()
+    sampler_cfg = SamplerConfig()
+    storage_cfg = StorageConfig()
+    model = ModelSampler.remote(asdict(sampler_cfg))
     sampler_refs = [Sampler.remote(env_hosts, model) for _ in range(num_samplers)]
-    controller = Controller.remote(sampler_refs)
+    controller = Controller.remote(sampler_refs, asdict(storage_cfg))
     return controller
 
 
