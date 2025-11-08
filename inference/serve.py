@@ -5,16 +5,26 @@ import json
 import random
 import time
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Tuple, cast
 
-import ray
 import grpc
+import ray
+from envd.generated import tools_pb2 as tools_pb2_module
+from envd.generated import tools_pb2_grpc as tools_pb2_grpc_module
 from google.protobuf.json_format import MessageToDict
 
-from envd.generated import tools_pb2, tools_pb2_grpc
 from .config import SamplerConfig, StorageConfig
 from .model import create_sampler, ensure_json_plan
 from .storage import create_storage, write_rollout_records
+
+tools_pb2 = cast(Any, tools_pb2_module)
+tools_pb2_grpc = cast(Any, tools_pb2_grpc_module)
+ray = cast(Any, ray)
+
+if TYPE_CHECKING:
+    from ray.actor import ActorHandle
+else:  # pragma: no cover - typing fallback
+    ActorHandle = Any
 
 
 @dataclass(slots=True)
@@ -39,15 +49,14 @@ def build_request(tool: str, args: Dict[str, Any]) -> Any:
     return spec.request_cls(**args)
 
 
-def stub_method(stub: tools_pb2_grpc.ToolsStub, tool: str):
+def stub_method(stub: Any, tool: str):
     spec = TOOL_SPECS.get(tool)
     if not spec:
         raise ValueError(f"unknown tool: {tool}")
     return getattr(stub, spec.attr)
 
 
-@ray.remote(num_cpus=0.05)
-class EnvClient:
+class EnvClientImpl:
     def __init__(self, host: str):
         self._host = host
         self._channel = grpc.aio.insecure_channel(host)
@@ -58,9 +67,9 @@ class EnvClient:
         rpc = stub_method(self._stub, tool)
         try:
             response = await rpc(request, timeout=timeout)
-            payload = MessageToDict(response, preserving_proto_field_name=True, including_default_value_fields=True)
+            payload = MessageToDict(response, preserving_proto_field_name=True)
             return {"tool": tool, "ok": True, "response": payload}
-        except grpc.aio.AioRpcError as exc:  # noqa: D
+        except grpc.aio.AioRpcError as exc:  # noqa: D401
             return {
                 "tool": tool,
                 "ok": False,
@@ -71,9 +80,12 @@ class EnvClient:
     async def close(self) -> None:
         await self._channel.close()
 
+    @classmethod
+    def remote(cls, host: str) -> Any:  # pragma: no cover - typing helper
+        return cls(host)
 
-@ray.remote(num_cpus=0.1)
-class ModelSampler:
+
+class ModelSamplerImpl:
     def __init__(self, cfg_dict: Dict[str, Any]):
         self._cfg = SamplerConfig(**cfg_dict)
         self._backend = create_sampler(self._cfg)
@@ -83,9 +95,12 @@ class ModelSampler:
         normalized = await ensure_json_plan(plan)
         return normalized
 
+    @classmethod
+    def remote(cls, cfg_dict: Dict[str, Any]) -> Any:  # pragma: no cover - typing helper
+        return cls(cfg_dict)
 
-@ray.remote(num_cpus=0.2)
-class Sampler:
+
+class SamplerImpl:
     def __init__(self, env_hosts: Iterable[str], model_ref):
         self._envs = [EnvClient.remote(host) for host in env_hosts]
         self._model = model_ref
@@ -130,10 +145,13 @@ class Sampler:
         latency = time.perf_counter() - started
         return {"trajectory": trajectory, "latency_s": latency}
 
+    @classmethod
+    def remote(cls, env_hosts: Iterable[str], model_ref: Any) -> Any:  # pragma: no cover - typing helper
+        return cls(env_hosts, model_ref)
 
-@ray.remote(num_cpus=0.05)
-class Controller:
-    def __init__(self, sampler_refs: Iterable[ray.actor.ActorHandle], storage_cfg: Dict[str, Any]):
+
+class ControllerImpl:
+    def __init__(self, sampler_refs: Iterable[ActorHandle], storage_cfg: Dict[str, Any]):
         self._samplers = list(sampler_refs)
         self._storage = create_storage(StorageConfig(**storage_cfg))
 
@@ -168,6 +186,22 @@ class Controller:
 
         records = await write_rollout_records(self._storage, pairs)
         return records
+
+    @classmethod
+    def remote(cls, sampler_refs: Iterable[ActorHandle], storage_cfg: Dict[str, Any]) -> Any:  # pragma: no cover
+        return cls(sampler_refs, storage_cfg)
+
+
+if TYPE_CHECKING:
+    EnvClient = EnvClientImpl
+    ModelSampler = ModelSamplerImpl
+    Sampler = SamplerImpl
+    Controller = ControllerImpl
+else:  # pragma: no cover - runtime actor binding
+    EnvClient = ray.remote(num_cpus=0.05)(EnvClientImpl)
+    ModelSampler = ray.remote(num_cpus=0.1)(ModelSamplerImpl)
+    Sampler = ray.remote(num_cpus=0.2)(SamplerImpl)
+    Controller = ray.remote(num_cpus=0.05)(ControllerImpl)
 
 
 def bootstrap_ray(env_hosts: List[str], *, num_samplers: int = 2):

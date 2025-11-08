@@ -12,7 +12,7 @@ from .data import batch_records, load_rollout_file, to_tensors
 from .model import PolicyModel
 
 
-def prepare_batch(tensors: dict, device: str) -> dict:
+def prepare_batch(tensors: dict, device: torch.device) -> dict:
     return {key: value.to(device) for key, value in tensors.items()}
 
 
@@ -90,7 +90,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Train PPO MoE policy")
     parser.add_argument("--rollouts", type=Path, required=True, help="Path to rollout jsonl file")
     parser.add_argument("--checkpoint-dir", type=Path, default=Path("./checkpoints"))
-    parser.add_argument("--total-steps", type=int, default=TrainConfig.total_steps, help="Total PPO steps")
+    default_cfg = TrainConfig()
+    parser.add_argument("--total-steps", type=int, default=default_cfg.total_steps, help="Total PPO steps")
     parser.add_argument("--device", type=str, default="cuda", help="Device override (cuda/cpu)")
     args = parser.parse_args()
 

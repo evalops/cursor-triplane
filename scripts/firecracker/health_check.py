@@ -4,7 +4,6 @@ import asyncio
 from typing import Iterable
 
 import grpc
-
 from envd.generated import tools_pb2, tools_pb2_grpc
 
 

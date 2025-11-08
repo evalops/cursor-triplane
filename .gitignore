@@ -9,4 +9,5 @@ checkpoints/
 dist/
 build/
 *.log
+/.coverage
 /.venv/

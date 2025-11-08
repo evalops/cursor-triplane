@@ -23,3 +23,10 @@ def test_write_rollout_records_persists():
     records = asyncio.run(write_rollout_records(storage, [("prompt-2", {"latency": 1.0})], now=lambda: 456.0))
     assert storage.records == records
     assert records[0]["timestamp_s"] == 456.0
+
+
+def test_write_rollout_records_noop_when_empty():
+    storage = InMemoryStorage()
+    records = asyncio.run(write_rollout_records(storage, [], now=lambda: 789.0))
+    assert records == []
+    assert storage.records is None

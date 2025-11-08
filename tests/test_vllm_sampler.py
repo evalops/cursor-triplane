@@ -1,9 +1,7 @@
-import asyncio
 import json
 
 import httpx
 import pytest
-
 from inference.config import SamplerConfig
 from inference.model import create_sampler
 
@@ -35,6 +33,26 @@ async def test_vllm_sampler_formats_plan(monkeypatch):
     monkeypatch.setattr(httpx.AsyncClient, "aclose", fake_close, raising=False)
 
     plan = await sampler.sample("Fix bug")
+    assert json.loads(plan)["then"] == []
+
+    await sampler.close()
+
+
+@pytest.mark.asyncio
+async def test_vllm_sampler_fallback_on_invalid_json(monkeypatch):
+    cfg = SamplerConfig(kind="vllm-openai", vllm_rpc_host="localhost")
+    sampler = create_sampler(cfg)
+
+    async def fake_post(self, url, json):
+        return DummyResponse({"choices": [{"text": "not-json"}]})
+
+    async def fake_close(self):
+        return None
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post, raising=False)
+    monkeypatch.setattr(httpx.AsyncClient, "aclose", fake_close, raising=False)
+
+    plan = await sampler.sample("Investigate")
     assert json.loads(plan)["then"] == []
 
     await sampler.close()

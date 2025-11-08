@@ -69,7 +69,7 @@ def train(args) -> None:
     model = PPOPolicyValue(moe_cfg)
     engine_cfg = build_engine_config(
         moe_cfg,
-        {"lr": train_cfg.lr, "betas": [0.9, 0.95], "eps": 1e-8, "weight_decay": train_cfg.weight_decay},
+        {"lr": train_cfg.lr, "betas": (0.9, 0.95), "eps": 1e-8, "weight_decay": train_cfg.weight_decay},
     )
 
     engine, _, _, _ = deepspeed.initialize(

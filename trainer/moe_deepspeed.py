@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
-from typing import Dict, Tuple
+from typing import Any, Dict, Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-try:
-    from deepspeed.moe.layer import MoE
+from .config import DeepSpeedMoEConfig
 
+MoE: Any
+try:
+    from deepspeed.moe.layer import MoE as _MoE
+
+    MoE = _MoE
     HAS_DEEPSPEED = True
 except ImportError:  # pragma: no cover - optional dependency
-    MoE = None  # type: ignore[assignment]
+    MoE = None
     HAS_DEEPSPEED = False
 
 try:
@@ -22,8 +26,6 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     _fp8_autocast = None
     HAS_TRANSFORMER_ENGINE = False
-
-from .config import DeepSpeedMoEConfig
 
 
 class ExpertMLP(nn.Module):
@@ -42,7 +44,7 @@ def _fp8_context(enabled: bool):
     return nullcontext()
 
 
-def build_moe(hidden_size: int, ffn_hidden: int, num_experts: int, capacity_factor: float) -> MoE:
+def build_moe(hidden_size: int, ffn_hidden: int, num_experts: int, capacity_factor: float) -> Any:
     if not HAS_DEEPSPEED:
         raise RuntimeError("DeepSpeed MoE is not available; install deepspeed to enable this module")
     return MoE(
@@ -127,7 +129,7 @@ class PPOPolicyValue(nn.Module):
         return selected.mean(dim=-1)
 
 
-def build_engine_config(cfg: DeepSpeedMoEConfig, optimizer: Dict[str, float]) -> Dict:
+def build_engine_config(cfg: DeepSpeedMoEConfig, optimizer: Dict[str, Any]) -> Dict:
     base = cfg.to_deepspeed_dict()
     base["optimizer"] = {"type": "AdamW", "params": optimizer}
     return base

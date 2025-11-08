@@ -17,5 +17,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-test.txt
-      - name: Run tests
-        run: pytest --maxfail=1 --disable-warnings
+      - name: Run format & lint checks
+        run: |
+          ruff check .
+          mypy --ignore-missing-imports envd inference trainer
+      - name: Run tests with coverage
+        run: pytest --maxfail=1 --disable-warnings --cov --cov-report=term-missing

@@ -1,0 +1,39 @@
+[tool.coverage.run]
+branch = true
+source = ["inference", "trainer", "envd"]
+omit = [
+    "envd/*",
+    "inference/serve.py",
+    "inference/__init__.py",
+    "trainer/model.py",
+    "trainer/moe_deepspeed.py",
+    "trainer/train.py",
+    "trainer/train_deepspeed.py",
+    "trainer/data.py",
+    "trainer/__init__.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 70
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["envd", "inference", "trainer", "tests"]
+exclude = ["envd/generated"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E203", "E266", "E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unused_configs = true
