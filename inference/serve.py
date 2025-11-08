@@ -5,7 +5,7 @@ import json
 import random
 import time
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Tuple
 
 import ray
 import grpc
@@ -14,7 +14,7 @@ from google.protobuf.json_format import MessageToDict
 from envd.generated import tools_pb2, tools_pb2_grpc
 from .config import SamplerConfig, StorageConfig
 from .model import create_sampler, ensure_json_plan
-from .storage import create_storage
+from .storage import create_storage, write_rollout_records
 
 
 @dataclass(slots=True)
@@ -148,7 +148,7 @@ class Controller:
                 prompt_map[ref] = prompt
 
         deadline = time.perf_counter() + timeout_s
-        results: List[Dict[str, Any]] = []
+        pairs: List[Tuple[str, Dict[str, Any]]] = []
         pending = list(object_refs)
 
         while pending and time.perf_counter() < deadline:
@@ -160,16 +160,14 @@ class Controller:
                     result = await ref
                 except Exception as exc:  # noqa: BLE001
                     result = {"error": str(exc)}
-                record = {"prompt": prompt, "result": result, "timestamp_s": time.time()}
-                results.append(record)
+                pairs.append((prompt, result))
                 prompt_map.pop(ref, None)
 
         for ref in pending:
             ray.cancel(ref, force=True)
 
-        if results:
-            await self._storage.write(results)
-        return results
+        records = await write_rollout_records(self._storage, pairs)
+        return records
 
 
 def bootstrap_ray(env_hosts: List[str], *, num_samplers: int = 2):

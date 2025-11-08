@@ -4,7 +4,8 @@ import asyncio
 import json
 import uuid
 from pathlib import Path
-from typing import Any, Dict, Iterable
+import time
+from typing import Any, Dict, Iterable, List, Tuple, Callable
 
 from .config import StorageConfig
 
@@ -60,6 +61,25 @@ class NoOpWriter(StorageWriter):
         return None
 
 
+def build_rollout_records(entries: Iterable[Tuple[str, Dict[str, Any]]], now: Callable[[], float] | None = None) -> List[Dict[str, Any]]:
+    timestamp = now or time.time
+    return [
+        {
+            "prompt": prompt,
+            "result": result,
+            "timestamp_s": timestamp(),
+        }
+        for prompt, result in entries
+    ]
+
+
+async def write_rollout_records(storage: StorageWriter, entries: Iterable[Tuple[str, Dict[str, Any]]], now: Callable[[], float] | None = None) -> List[Dict[str, Any]]:
+    records = build_rollout_records(entries, now=now)
+    if records:
+        await storage.write(records)
+    return records
+
+
 def create_storage(cfg: StorageConfig) -> StorageWriter:
     try:
         if cfg.kind == "s3" and cfg.s3_bucket:
@@ -73,4 +93,4 @@ def create_storage(cfg: StorageConfig) -> StorageWriter:
     return NoOpWriter()
 
 
-__all__ = ["create_storage", "StorageWriter"]
+__all__ = ["create_storage", "StorageWriter", "build_rollout_records", "write_rollout_records"]
